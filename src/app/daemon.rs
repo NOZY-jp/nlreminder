@@ -47,6 +47,18 @@ pub async fn run() -> Result<()> {
                         tracing::error!(error = %err, "google tasks sync failed");
                     }
                 }
+
+                match sync::fetch_new_gmail_messages(&pool, &config.env).await {
+                    Ok(messages) => {
+                        tracing::info!(
+                            fetched = messages.len(),
+                            "gmail sync finished"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!(error = %err, "gmail sync failed");
+                    }
+                }
             }
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("shutting down");

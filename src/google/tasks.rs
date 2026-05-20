@@ -120,7 +120,7 @@ pub fn all_day_range_for_due(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{NaiveDate, TimeZone as _};
+    use chrono::NaiveDate;
 
     #[test]
     fn parse_tasks_list_response_maps_fields() {
