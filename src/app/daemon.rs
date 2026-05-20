@@ -34,6 +34,19 @@ pub async fn run() -> Result<()> {
                         tracing::error!(error = %err, "caldav sync failed");
                     }
                 }
+
+                match sync::sync_google_tasks_to_db(&pool, &config.env, &config.settings, &client).await {
+                    Ok(report) => {
+                        tracing::info!(
+                            upserted = report.upserted,
+                            calendar_synced = report.calendar_synced,
+                            "google tasks sync finished"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!(error = %err, "google tasks sync failed");
+                    }
+                }
             }
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("shutting down");

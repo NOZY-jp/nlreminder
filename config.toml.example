@@ -1,0 +1,13 @@
+timezone = "Asia/Tokyo"
+morning_summary_hour = 8
+quiet_hours_start = 0
+quiet_hours_end = 8
+scan_interval_secs = 300
+database_path = "data/nlreminder.db"
+backup_dir = "backups"
+
+# Google Tasks list ID. Empty = "@default"
+google_tasks_list_id = ""
+
+# CalDAV calendar collection path (relative to CALDAV_URL). Empty = default calendar
+caldav_calendar_path = "/nozyjp/sshCalendar/"

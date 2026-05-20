@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use crate::caldav::{CalDavClient, CalDavEvent, default_fetch_range_at};
 use crate::config::Settings;
-use crate::models::{UpsertAction, mark_in_range_missing_completed, upsert_from_caldav};
+use crate::models::{CalendarUpsertAction, mark_in_range_missing_completed, upsert_from_caldav};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SyncCalendarReport {
@@ -55,7 +55,7 @@ pub async fn sync_fetched_events_to_db(
             now,
         )
         .await?;
-        if action == UpsertAction::Inserted || action == UpsertAction::Updated {
+        if action == CalendarUpsertAction::Inserted || action == CalendarUpsertAction::Updated {
             upserted += 1;
         }
     }

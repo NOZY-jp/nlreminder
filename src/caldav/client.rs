@@ -94,6 +94,48 @@ impl CalDavClient {
         Ok(all_events)
     }
 
+    pub fn calendar_collection_url(&self) -> Result<Url> {
+        if !self.calendar_path.is_empty() {
+            join_url(&self.base_url, &self.calendar_path)
+        } else {
+            Ok(self.base_url.clone())
+        }
+    }
+
+    pub async fn put_resource(
+        &self,
+        url: &Url,
+        body: &str,
+        if_match: Option<&str>,
+    ) -> Result<String> {
+        let mut request = self
+            .http
+            .request(reqwest::Method::PUT, url.clone())
+            .basic_auth(&self.username, Some(&self.password))
+            .header("Content-Type", "text/calendar; charset=utf-8")
+            .body(body.to_owned());
+
+        if let Some(etag) = if_match {
+            request = request.header("If-Match", etag);
+        }
+
+        let response = request
+            .send()
+            .await
+            .wrap_err_with(|| format!("CalDAV PUT failed for {}", url))?
+            .error_for_status()
+            .wrap_err_with(|| format!("CalDAV server returned an error for PUT {}", url))?;
+
+        let etag = response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.trim_matches('"').to_owned())
+            .unwrap_or_else(|| format!("\"{}\"", url));
+
+        Ok(etag)
+    }
+
     async fn resolve_calendar_urls(&self) -> Result<Vec<Url>> {
         if !self.calendar_path.is_empty() {
             return Ok(vec![join_url(&self.base_url, &self.calendar_path)?]);

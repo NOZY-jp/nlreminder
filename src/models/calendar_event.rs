@@ -163,6 +163,72 @@ pub async fn mark_in_range_missing_completed(
     Ok(updated as u32)
 }
 
+pub async fn upsert_from_todo_deadline(
+    pool: &SqlitePool,
+    todo_id: Uuid,
+    external_uid: &str,
+    title: &str,
+    starts_at: DateTime<Utc>,
+    ends_at: DateTime<Utc>,
+    external_etag: &str,
+    external_href: &str,
+    now: DateTime<Utc>,
+) -> Result<UpsertAction> {
+    let existing = find_by_external_uid(pool, external_uid).await?;
+
+    match existing {
+        None => {
+            let id = Uuid::new_v4();
+            sqlx::query(
+                r#"
+                INSERT INTO calendar_events (
+                    id, external_uid, external_etag, external_href, title,
+                    starts_at, ends_at, all_day, state, remind_enabled,
+                    nlreminder_owned, source_todo_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'scheduled', 1, 1, ?, ?, ?)
+                "#,
+            )
+            .bind(id.to_string())
+            .bind(external_uid)
+            .bind(external_etag)
+            .bind(external_href)
+            .bind(title)
+            .bind(format_dt(starts_at))
+            .bind(format_dt(ends_at))
+            .bind(todo_id.to_string())
+            .bind(format_dt(now))
+            .bind(format_dt(now))
+            .execute(pool)
+            .await
+            .wrap_err("failed to insert todo-linked calendar event")?;
+            Ok(UpsertAction::Inserted)
+        }
+        Some(row) => {
+            sqlx::query(
+                r#"
+                UPDATE calendar_events
+                SET title = ?, starts_at = ?, ends_at = ?, all_day = 1,
+                    external_etag = ?, external_href = ?, source_todo_id = ?,
+                    nlreminder_owned = 1, updated_at = ?
+                WHERE id = ?
+                "#,
+            )
+            .bind(title)
+            .bind(format_dt(starts_at))
+            .bind(format_dt(ends_at))
+            .bind(external_etag)
+            .bind(external_href)
+            .bind(todo_id.to_string())
+            .bind(format_dt(now))
+            .bind(row.id.to_string())
+            .execute(pool)
+            .await
+            .wrap_err("failed to update todo-linked calendar event")?;
+            Ok(UpsertAction::Updated)
+        }
+    }
+}
+
 struct InsertCalendarEvent<'a> {
     id: Uuid,
     external_uid: &'a str,
