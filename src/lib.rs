@@ -3,6 +3,7 @@ pub mod caldav;
 pub mod config;
 pub mod db;
 pub mod google;
+pub mod mail;
 pub mod models;
 pub mod schedule;
 pub mod sync;

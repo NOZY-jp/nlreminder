@@ -46,6 +46,38 @@ pub async fn find_by_external_task_id(
     row.map(TryInto::try_into).transpose()
 }
 
+pub async fn find_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Todo>> {
+    let row = sqlx::query_as::<_, TodoRow>(
+        r#"
+        SELECT id, external_task_id, title, due_at, state, remind_enabled, created_at, updated_at
+        FROM todos
+        WHERE id = ?
+        "#,
+    )
+    .bind(id.to_string())
+    .fetch_optional(pool)
+    .await
+    .wrap_err("failed to load todo by id")?;
+
+    row.map(TryInto::try_into).transpose()
+}
+
+pub async fn list_open(pool: &SqlitePool) -> Result<Vec<Todo>> {
+    let rows = sqlx::query_as::<_, TodoRow>(
+        r#"
+        SELECT id, external_task_id, title, due_at, state, remind_enabled, created_at, updated_at
+        FROM todos
+        WHERE state IN ('todo', 'ongoing')
+        ORDER BY due_at IS NULL, due_at ASC, title ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .wrap_err("failed to list open todos")?;
+
+    rows.into_iter().map(TryInto::try_into).collect()
+}
+
 pub async fn upsert_from_google_task(
     pool: &SqlitePool,
     external_task_id: &str,
@@ -305,5 +337,22 @@ mod tests {
         .unwrap();
 
         assert_eq!(todo.state, TodoState::Ongoing);
+    }
+
+    #[tokio::test]
+    async fn list_open_excludes_done_todos() {
+        let pool = test_pool().await;
+        let now = Utc.with_ymd_and_hms(2026, 5, 21, 0, 0, 0).unwrap();
+
+        upsert_from_google_task(&pool, "open-1", "Open", None, false, now)
+            .await
+            .unwrap();
+        upsert_from_google_task(&pool, "done-1", "Done", None, true, now)
+            .await
+            .unwrap();
+
+        let open = list_open(&pool).await.unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].title, "Open");
     }
 }

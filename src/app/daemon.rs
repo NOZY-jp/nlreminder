@@ -1,14 +1,17 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use color_eyre::eyre::Result;
+use tokio::sync::Mutex;
 use tokio::time::MissedTickBehavior;
 
-use crate::{AppConfig, caldav, db, sync};
+use crate::{AppConfig, caldav, db, mail, sync};
 
 pub async fn run() -> Result<()> {
     let config = AppConfig::load()?;
     let pool = db::connect_and_migrate(&config.settings.database_path).await?;
     let client = caldav::CalDavClient::new(&config.env, &config.settings)?;
+    let mail_queue = Arc::new(Mutex::new(mail::UnclassifiedMailQueue::new()));
 
     tracing::info!("nlreminder daemon started");
     tracing::info!("database: {}", config.settings.database_path.display());
@@ -48,10 +51,12 @@ pub async fn run() -> Result<()> {
                     }
                 }
 
-                match sync::fetch_new_gmail_messages(&pool, &config.env).await {
-                    Ok(messages) => {
+                let mut queue = mail_queue.lock().await;
+                match sync::sync_gmail_to_queue(&pool, &config.env, &mut queue).await {
+                    Ok(report) => {
                         tracing::info!(
-                            fetched = messages.len(),
+                            fetched = report.fetched,
+                            queued = report.queued,
                             "gmail sync finished"
                         );
                     }

@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
+use chrono_tz::Tz;
 use color_eyre::eyre::{Context, Result};
 use sqlx::SqlitePool;
 use uuid::Uuid;
+
+use crate::config::Settings;
 
 use super::enums::CalendarEventState;
 
@@ -48,6 +51,74 @@ pub async fn find_by_external_uid(
     .wrap_err("failed to load calendar event by external_uid")?;
 
     row.map(TryInto::try_into).transpose()
+}
+
+pub async fn find_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<CalendarEvent>> {
+    let row = sqlx::query_as::<_, CalendarEventRow>(
+        r#"
+        SELECT id, external_uid, external_etag, external_href, title,
+               starts_at, ends_at, all_day, state, remind_enabled,
+               nlreminder_owned, source_todo_id, created_at, updated_at
+        FROM calendar_events
+        WHERE id = ?
+        "#,
+    )
+    .bind(id.to_string())
+    .fetch_optional(pool)
+    .await
+    .wrap_err("failed to load calendar event by id")?;
+
+    row.map(TryInto::try_into).transpose()
+}
+
+pub async fn list_upcoming(
+    pool: &SqlitePool,
+    days: i64,
+    settings: &Settings,
+    now: DateTime<Utc>,
+) -> Result<Vec<CalendarEvent>> {
+    let (range_start, range_end) = upcoming_range_at(now, days, settings)?;
+    let rows = sqlx::query_as::<_, CalendarEventRow>(
+        r#"
+        SELECT id, external_uid, external_etag, external_href, title,
+               starts_at, ends_at, all_day, state, remind_enabled,
+               nlreminder_owned, source_todo_id, created_at, updated_at
+        FROM calendar_events
+        WHERE starts_at IS NOT NULL
+          AND starts_at >= ?
+          AND starts_at < ?
+          AND state IN ('scheduled', 'prepared')
+        ORDER BY starts_at ASC
+        "#,
+    )
+    .bind(format_dt(range_start))
+    .bind(format_dt(range_end))
+    .fetch_all(pool)
+    .await
+    .wrap_err("failed to list upcoming calendar events")?;
+
+    rows.into_iter().map(TryInto::try_into).collect()
+}
+
+fn upcoming_range_at(
+    now: DateTime<Utc>,
+    days: i64,
+    settings: &Settings,
+) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+    let timezone: Tz = settings
+        .timezone
+        .parse()
+        .wrap_err_with(|| format!("invalid timezone: {}", settings.timezone))?;
+    let local_now = now.with_timezone(&timezone);
+    let start = local_now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| color_eyre::eyre::eyre!("invalid local midnight"))?
+        .and_local_timezone(timezone)
+        .single()
+        .ok_or_else(|| color_eyre::eyre::eyre!("ambiguous local midnight"))?;
+    let end = start + chrono::Duration::days(days);
+    Ok((start.with_timezone(&Utc), end.with_timezone(&Utc)))
 }
 
 pub async fn upsert_from_caldav(
@@ -396,6 +467,7 @@ fn bool_i64(value: bool) -> i64 {
 mod tests {
     use super::*;
     use chrono::TimeZone as _;
+    use crate::config::Settings;
     use crate::db;
 
     async fn test_pool() -> SqlitePool {
@@ -569,5 +641,39 @@ mod tests {
         assert_eq!(gone.state, CalendarEventState::Completed);
         let seen = find_by_external_uid(&pool, "seen").await.unwrap().unwrap();
         assert_eq!(seen.state, CalendarEventState::Scheduled);
+    }
+
+    #[tokio::test]
+    async fn list_upcoming_includes_scheduled_events_in_range() {
+        let pool = test_pool().await;
+        let now = Utc.with_ymd_and_hms(2026, 5, 21, 12, 0, 0).unwrap();
+        let inside = now + chrono::Duration::days(2);
+        let outside = now + chrono::Duration::days(10);
+        let settings = Settings {
+            timezone: "Asia/Tokyo".to_owned(),
+            morning_summary_hour: 8,
+            quiet_hours_start: 0,
+            quiet_hours_end: 8,
+            scan_interval_secs: 300,
+            database_path: "data/nlreminder.db".into(),
+            backup_dir: "backups".into(),
+            google_tasks_list_id: String::new(),
+            caldav_calendar_path: String::new(),
+        };
+
+        upsert_from_caldav(
+            &pool, "in-range", "Inside", Some(inside), None, false, None, None, now,
+        )
+        .await
+        .unwrap();
+        upsert_from_caldav(
+            &pool, "out-range", "Outside", Some(outside), None, false, None, None, now,
+        )
+        .await
+        .unwrap();
+
+        let events = list_upcoming(&pool, 7, &settings, now).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title, "Inside");
     }
 }

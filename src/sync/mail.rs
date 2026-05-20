@@ -8,6 +8,7 @@ use crate::google::{
     gmail_after_query, initial_sync_after_date, list_history_message_ids,
     list_message_ids_for_query, refresh_access_token,
 };
+use crate::mail::UnclassifiedMailQueue;
 use crate::models::{sync_state_get, sync_state_set};
 
 const SYNC_STATE_KEY: &str = "gmail_history_id";
@@ -15,6 +16,30 @@ const SYNC_STATE_KEY: &str = "gmail_history_id";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SyncMailReport {
     pub fetched: u32,
+    pub queued: u32,
+}
+
+pub async fn sync_gmail_to_queue(
+    pool: &SqlitePool,
+    env: &EnvConfig,
+    queue: &mut UnclassifiedMailQueue,
+) -> Result<SyncMailReport> {
+    sync_gmail_to_queue_at(pool, env, queue, Utc::now()).await
+}
+
+pub async fn sync_gmail_to_queue_at(
+    pool: &SqlitePool,
+    env: &EnvConfig,
+    queue: &mut UnclassifiedMailQueue,
+    now: DateTime<Utc>,
+) -> Result<SyncMailReport> {
+    let messages = fetch_new_gmail_messages_at(pool, env, now).await?;
+    let fetched = messages.len() as u32;
+    queue.enqueue(messages);
+    Ok(SyncMailReport {
+        fetched,
+        queued: queue.len() as u32,
+    })
 }
 
 pub async fn fetch_new_gmail_messages(
@@ -127,7 +152,9 @@ mod tests {
         ];
         let report = SyncMailReport {
             fetched: messages.len() as u32,
+            queued: messages.len() as u32,
         };
         assert_eq!(report.fetched, 2);
+        assert_eq!(report.queued, 2);
     }
 }
